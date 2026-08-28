@@ -47,7 +47,7 @@
   #banner[hidden]{display:none}
   #hint{position:absolute;left:50%;top:58px;transform:translateX(-50%);background:rgba(0,0,0,.68);
     padding:7px 13px;border-radius:20px;font-size:11.5px;letter-spacing:.5px;pointer-events:none;
-    opacity:0;transition:opacity .25s}
+    white-space:nowrap;opacity:0;transition:opacity .25s}
   #hint.show{opacity:1}
 </style>
 
@@ -186,12 +186,13 @@ function redraw(){
   ctx.clearRect(0, 0, cw, sh);
   ctx.lineJoin = ctx.lineCap = 'round';
   fieldMarks();
+  var liftedMarker = (drag && drag.what === 'marker') ? drag.i : -1;
   for (var i = 0; i < icons.length; i++) drawIcon(icons[i], i === sel && mode === 'edit');
   for (i = 0; i < play.items.length; i++){
     var it = play.items[i];
     if (it.t === 'r') drawRoute(it);
-    else if (it.t === 'b') drawBall(it.p);
-    else drawBolt(it.p);
+    else if (it.t === 'b') drawBall(it.p, i === liftedMarker);
+    else drawBolt(it.p, i === liftedMarker);
   }
   if (active) drawRoute(active);
   drawQB();
@@ -323,10 +324,19 @@ function drawRoute(r){
   ctx.fillStyle = r.c; ctx.fill(); ctx.restore();
 }
 
+/* halo shown while a long press has a marker picked up */
+function liftRing(){
+  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.arc(0, 0, 23, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.arc(0, 0, 23, 0, TAU); ctx.stroke();
+}
+
 /* open crosshair + football: THROW IT TO THIS SPOT */
-function drawBall(fp){
+function drawBall(fp, lift){
   var p = S(fp[0], fp[1]), d;
   ctx.save(); ctx.translate(p[0], p[1]);
+  if (lift){ liftRing(); ctx.scale(1.14, 1.14); }
   ctx.beginPath(); ctx.arc(0, 0, 13, 0, TAU);
   ctx.moveTo(-18, 0); ctx.lineTo(-8.5, 0); ctx.moveTo(8.5, 0); ctx.lineTo(18, 0);
   ctx.moveTo(0, -18); ctx.lineTo(0, -8.5); ctx.moveTo(0, 8.5); ctx.lineTo(0, 18);
@@ -342,9 +352,10 @@ function drawBall(fp){
 
 /* filled disc + lightning bolt: LET IT GO WHEN I HIT HERE */
 var BOLT = [[0.06,-0.62],[-0.36,0.07],[-0.05,0.07],[-0.20,0.62],[0.36,-0.11],[0.05,-0.11]];
-function drawBolt(fp){
+function drawBolt(fp, lift){
   var p = S(fp[0], fp[1]), R = 13, i;
   ctx.save(); ctx.translate(p[0], p[1]);
+  if (lift){ liftRing(); ctx.scale(1.14, 1.14); }
   ctx.beginPath(); ctx.arc(0, 0, R + 2.2, 0, TAU);
   ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
   ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU);
@@ -384,6 +395,16 @@ function drawQB(){
 function onQB(sx, sy){
   var p = S(play.qb[0], play.qb[1]);
   return Math.hypot(p[0] - sx, p[1] - sy) <= 24;
+}
+/* topmost football / bolt marker under the finger, -1 for none */
+function markerAt(sx, sy){
+  for (var i = play.items.length - 1; i >= 0; i--){
+    var it = play.items[i];
+    if (it.t !== 'b' && it.t !== 'z') continue;
+    var p = S(it.p[0], it.p[1]);
+    if (Math.hypot(p[0] - sx, p[1] - sy) <= 22) return i;
+  }
+  return -1;
 }
 function iconAt(sx, sy){
   for (var i = icons.length - 1; i >= 0; i--){
@@ -430,16 +451,23 @@ cv.addEventListener('pointerdown', function(e){
     play.items.push({ t: mode === 'ball' ? 'b' : 'z', p: snap(f) });
     setMode('draw'); savePlay(); redraw(); pid = null; return;
   }
-  /* Routes almost always start next to the quarterback, so a plain drag there
-     has to draw. Picking him up is a long press instead: hold still on the
-     puck and he lifts; move first and you get a route. */
-  if (onQB(s[0], s[1])){
+  /* Routes almost always start next to the quarterback, and markers usually sit
+     right on a route, so a plain drag on any of them still has to draw. Picking
+     one up is a long press instead: hold still and it lifts; move first and you
+     get a route. */
+  var grab = null, mi;
+  if (onQB(s[0], s[1])) grab = { what: 'qb' };
+  else if ((mi = markerAt(s[0], s[1])) >= 0) grab = { what: 'marker', i: mi };
+  if (grab){
     lpFrom = s;
     lpTimer = setTimeout(function(){
       lpTimer = null;
       if (pid === null) return;
-      active = null; drag = { what: 'qb' };
-      hint('MOVING THE QB'); redraw();
+      active = null; drag = grab;
+      hint(grab.what === 'qb' ? 'MOVING THE QB'
+         : play.items[grab.i].t === 'b' ? 'MOVING THE TARGET'
+         : 'MOVING THE THROW POINT');
+      redraw();
     }, 340);
   }
   active = { t: 'r', c: pen, pts: [f] };
@@ -459,6 +487,7 @@ cv.addEventListener('pointermove', function(e){
   if (drag){
     s = local(evs[evs.length - 1]); f = clamp01(U(s[0], s[1]));
     if (drag.what === 'qb') play.qb = f;
+    else if (drag.what === 'marker') play.items[drag.i].p = f;
     else { icons[drag.i].u = f[0]; icons[drag.i].v = f[1]; }
     redraw(); return;
   }
@@ -477,7 +506,13 @@ function endStroke(e){
   pid = null;
   if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
   if (drag){
-    if (drag.what === 'qb') savePlay(); else saveMap();
+    if (drag.what === 'icon') saveMap();
+    else {
+      /* dropped markers grab a nearby route the same way freshly placed ones do,
+         so you can slide one along a break without having to be pixel perfect */
+      if (drag.what === 'marker') play.items[drag.i].p = snap(play.items[drag.i].p);
+      savePlay();
+    }
     drag = null; redraw(); return;
   }
   if (!active) return;

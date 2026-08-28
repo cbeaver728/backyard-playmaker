@@ -16,10 +16,15 @@ whoever is playing quarterback.
   here.* Use it on the break in your route so the throw is already in the air.
 - Both markers snap onto a nearby route, so you can pin the exact point of a break.
 - **↶** undoes the last route or marker. **✕** wipes the play for the next huddle.
-- **Moving the QB** — press and hold the QB puck until it lifts, then drag. He does
-  not have to stay in the middle, and you can walk him upfield as you gain yardage.
-  The dashed line of scrimmage follows him. A normal drag starting on the puck draws
-  a route as usual, so the two never fight.
+- **Moving things** — press and hold the QB puck, the football target or the bolt
+  until it lifts, then drag. The QB does not have to stay in the middle, and you can
+  walk him upfield as you gain yardage; the dashed line of scrimmage follows him.
+  Markers grab a nearby route again when you drop them, so you can slide one along a
+  break without being pixel perfect.
+
+  It is a hold rather than a plain drag because routes start next to the QB and
+  markers usually sit right on a route — a normal drag from any of them draws, so
+  the two never fight.
 
 **Editing the map** (✎, top right)
 
