@@ -1,0 +1,411 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1">
+<meta name="theme-color" content="#12180f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Backyard">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Backyard Playmaker</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;overscroll-behavior:none;background:#12180f;
+    font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#fff;-webkit-user-select:none;user-select:none;touch-action:none}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+  #stage{position:relative;flex:1;min-height:0}
+  #field,#ink{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #ink{touch-action:none}
+  #bar{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:8px;
+    padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#12180f;
+    border-top:1px solid #2c3a26}
+  button{background:#232e1d;border:1.5px solid #3a4a32;color:#dfe8d8;border-radius:11px;
+    height:42px;min-width:42px;padding:0 11px;font:600 15px/1 inherit;display:flex;
+    align-items:center;justify-content:center;cursor:pointer}
+  button:active{transform:scale(.94)}
+  .pen i{display:block;width:17px;height:17px;border-radius:50%;box-shadow:0 0 0 1.5px rgba(0,0,0,.5)}
+  .on{border-color:#fff;background:#3b4a32}
+  #undo,#clr,#ballBtn{font-size:19px}
+  #hint{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(0,0,0,.62);
+    padding:7px 13px;border-radius:20px;font-size:12px;letter-spacing:.4px;pointer-events:none;
+    opacity:0;transition:opacity .25s}
+  #hint.show{opacity:1}
+</style>
+
+<div id="app">
+  <div id="stage">
+    <svg id="field" xmlns="http://www.w3.org/2000/svg"></svg>
+    <canvas id="ink"></canvas>
+    <div id="hint"></div>
+  </div>
+  <div id="bar">
+    <button class="pen on" data-c="#ffffff"><i style="background:#ffffff"></i></button>
+    <button class="pen" data-c="#ffd21f"><i style="background:#ffd21f"></i></button>
+    <button class="pen" data-c="#37c8ff"><i style="background:#37c8ff"></i></button>
+    <button class="pen" data-c="#ff4d4d"><i style="background:#ff4d4d"></i></button>
+    <button id="ballBtn">&#127944;</button>
+    <button id="undo">&#8630;</button>
+    <button id="clr">&#10005;</button>
+  </div>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   FIELD MODEL  (units = feet, traced off the satellite photo)
+   x : 0 = near end (sidewalk, behind QB)  ->  83 = back of end zone
+   y : 0  = LEFT sideline  (north: big tree + hedge row)
+       42 = RIGHT sideline (south: gravel path, deck, house)
+   Play always goes toward the swing set = +x = up the screen.
+-------------------------------------------------------------------*/
+var L = 83, W = 42, GOAL = 61, K = 0.5, YC = 20.5;
+
+var $ = function(s){ return document.querySelector(s); };
+var svg = $('#field'), cv = $('#ink'), ctx = cv.getContext('2d');
+
+var cw = 0, sh = 0, pxft = 1, cx = 0, yB = 0, Hs = 1, dpr = 1;
+
+function measure(){
+  var st = $('#stage');
+  cw = st.clientWidth; sh = st.clientHeight;
+  yB = sh * 0.985;
+  Hs = sh * 0.90;
+  pxft = Math.min(cw * 0.90 / 39, sh * 0.545 / W);
+  cx = cw / 2;
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+}
+
+/* projective (pinhole) map -- straight lines stay straight */
+function proj(x, y){
+  var u = x / L, w = 1 + K * u;
+  return [ cx + ((y - YC) * pxft) / w,
+           yB - Hs * u * (1 + K) / w ];
+}
+function unproj(sx, sy){
+  var A = (yB - sy) / Hs;
+  A = Math.min(A, (1 + K) / K - 0.02);
+  var u = A / (1 + K - A * K), w = 1 + K * u;
+  return [ u * L, (sx - cx) * w / pxft + YC ];
+}
+
+/* ---------------- background art ---------------- */
+function rnd(i){ var s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); }
+function P(x, y){ var p = proj(x, y); return p[0].toFixed(1) + ',' + p[1].toFixed(1); }
+function poly(pts, a){
+  var s = '';
+  for (var i = 0; i < pts.length; i++) s += (i ? ' ' : '') + P(pts[i][0], pts[i][1]);
+  return '<polygon points="' + s + '" ' + (a || '') + '/>';
+}
+function line(x1, y1, x2, y2, a){
+  var A = proj(x1, y1), B = proj(x2, y2);
+  return '<line x1="' + A[0].toFixed(1) + '" y1="' + A[1].toFixed(1) +
+         '" x2="' + B[0].toFixed(1) + '" y2="' + B[1].toFixed(1) + '" ' + a + '/>';
+}
+function blob(bx, by, r, a, seed){
+  var n = 16, pts = [], i, t, rr;
+  for (i = 0; i < n; i++){
+    t = i / n * Math.PI * 2; rr = r * (0.80 + 0.36 * rnd(seed + i));
+    pts.push([bx + Math.cos(t) * rr, by + Math.sin(t) * rr]);
+  }
+  return poly(pts, a);
+}
+function tree(bx, by, r, seed){
+  return blob(bx + 1.3, by + 2.0, r, 'fill="#0d1a0c" opacity=".32"', seed + 90)
+       + blob(bx, by, r, 'fill="#20501c"', seed)
+       + blob(bx - r * 0.18, by - r * 0.18, r * 0.70, 'fill="#2c6825"', seed + 30)
+       + blob(bx - r * 0.30, by - r * 0.28, r * 0.38, 'fill="#3a812e"', seed + 60);
+}
+function bush(bx, by, r, seed, c1, c2){
+  return blob(bx + 0.6, by + 0.9, r, 'fill="#0d1a0c" opacity=".28"', seed + 7)
+       + blob(bx, by, r, 'fill="' + (c1 || '#2a5d23') + '"', seed)
+       + blob(bx - r * 0.2, by - r * 0.2, r * 0.55, 'fill="' + (c2 || '#37782c') + '"', seed + 3);
+}
+function label(x, y, txt, size, op){
+  var p = proj(x, y), pad = (size || 11) * txt.length * 0.42, anchor = 'middle';
+  /* keep edge labels on screen instead of letting them run off the side */
+  if (p[0] + pad > cw - 5){ anchor = 'end'; p[0] = cw - 6; }
+  else if (p[0] - pad < 5){ anchor = 'start'; p[0] = 6; }
+  return '<text x="' + p[0].toFixed(1) + '" y="' + p[1].toFixed(1) + '" text-anchor="' + anchor + '"' +
+    ' font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="' + (size || 11) + '"' +
+    ' font-weight="700" letter-spacing="1.6" fill="#ffffff" opacity="' + (op || 0.42) + '">' + txt + '</text>';
+}
+
+/* lawn outline, traced from the satellite image */
+var LAWN = [
+  [0,2],[26,3.5],[46,5.5],[58,3],[61.5,2],        /* north edge -> corner of the mulch bed */
+  [61.5,23],[68,29],[76,28.5],[83,29],            /* around the swing-set bed */
+  [83,43],[63,43],[60,37.5],[30,38],[12,37],[0,35.5]  /* back, then south edge home */
+];
+var MULCH = [[61.5,1.5],[77,0.5],[77,28],[68,29.8],[61.5,23.5]];
+
+function buildField(){
+  var g = [], i, x, y;
+
+  g.push('<defs><filter id="soft" x="-30%" y="-30%" width="160%" height="160%">' +
+         '<feGaussianBlur stdDeviation="' + (pxft * 1.6).toFixed(1) + '"/></filter>' +
+         '<clipPath id="lc">' + poly(LAWN, '') + '</clipPath></defs>');
+
+  g.push('<rect x="0" y="0" width="' + cw + '" height="' + sh + '" fill="#26301f"/>');
+
+  /* backdrop behind the end zone: neighbour trees, parking pad, vinyl fence */
+  g.push(poly([[83,-12],[108,-12],[108,56],[83,56]], 'fill="#1b3a19"'));
+  for (i = 0; i < 11; i++) g.push(tree(85 + rnd(i) * 10, -10 + i * 6.2, 4 + rnd(i + 40) * 2.6, i * 11));
+  g.push(poly([[76,-10],[100,-10],[100,30],[76,29]], 'fill="#3a3b3d"'));
+  g.push(line(83.6, 29, 83.6, 46, 'stroke="#e9e7e0" stroke-width="3" opacity=".85"'));
+
+  /* bark mulch bed under the swing set */
+  g.push(poly(MULCH, 'fill="#5f3c21"'));
+  g.push(poly([[62.5,2.5],[76,1.6],[76,26.6],[68,28.4],[62.5,22.4]], 'fill="#7a5130"'));
+  g.push(poly(MULCH, 'fill="none" stroke="#4a3117" stroke-width="2.5"'));
+
+  /* ---- the lawn ---- */
+  var f = '<g clip-path="url(#lc)">';
+  f += poly([[-8,-10],[96,-10],[96,54],[-8,54]], 'fill="#3f7c33"');
+  for (x = -6; x < 96; x += 7.5)
+    f += poly([[x,-10],[x + 7.5,-10],[x + 7.5,54],[x,54]],
+      'fill="' + ((Math.round(x / 7.5) % 2) ? '#478a38' : '#3a7130') + '"');
+  f += poly([[GOAL,-10],[96,-10],[96,54],[GOAL,54]], 'fill="#2f6a2c" opacity=".5"');
+  /* worn patches + the shade the tree line throws across the middle of the yard */
+  f += '<g filter="url(#soft)">';
+  for (i = 0; i < 7; i++)
+    f += blob(6 + rnd(i) * 60, 6 + rnd(i + 5) * 26, 5 + rnd(i + 11) * 5,
+      'fill="#54a041" opacity=".13"', i * 31);
+  f += poly([[19,3],[64,1],[69,25],[24,21]], 'fill="#0e2410" opacity=".2"');
+  f += poly([[8,-4],[27,-4],[29,13],[10,10]], 'fill="#0e2410" opacity=".22"');
+  f += '</g>';
+  f += line(15.25, -10, 15.25, 54, 'stroke="#ffffff" stroke-width="1.3" opacity=".2" stroke-dasharray="7 9"');
+  f += line(30.5, -10, 30.5, 54, 'stroke="#ffffff" stroke-width="1.3" opacity=".2" stroke-dasharray="7 9"');
+  f += line(45.75, -10, 45.75, 54, 'stroke="#ffffff" stroke-width="1.3" opacity=".2" stroke-dasharray="7 9"');
+  f += line(GOAL, -10, GOAL, 54, 'stroke="#ffffff" stroke-width="2.6" opacity=".7"');
+  f += line(83, -10, 83, 54, 'stroke="#ffffff" stroke-width="1.6" opacity=".35"');
+  f += '</g>';
+  g.push(f);
+
+  g.push(label(15.25, 30, '5 yd', 9.5, 0.3));
+  g.push(label(30.5, 30, '10 yd', 9.5, 0.3));
+  g.push(label(45.75, 30, '15 yd', 9.5, 0.3));
+  g.push(label(GOAL, 30, 'GOAL', 11, 0.62));
+
+  /* ---- LEFT sideline: hedge wall, arborvitae, big shade trees ---- */
+  g.push(poly([[18,-4],[64,-4],[64,1.2],[18,0.4]], 'fill="#22521e"'));
+  for (x = 20; x < 64; x += 4.4) g.push(bush(x, 0, 2.1, x * 3, '#2b6323', '#387d2c'));
+  for (x = 46; x < 64; x += 4.6) g.push(bush(x, 1.4, 1.5, x * 5 + 1, '#1f5c2a', '#2b7736'));
+  g.push(tree(14, -4.5, 9.5, 5));                       /* the big shade tree */
+  g.push(tree(36, -6, 9.5, 21));
+  g.push(tree(54, -6, 8, 44));
+  for (i = 0; i < 4; i++) g.push(bush(2 + i * 3.4, -2.5, 2.4, i * 17, '#5d7530', '#74903a'));
+  g.push(label(14, 7, 'BIG TREE', 9.5, 0.5));
+  g.push(label(40, 6, 'TREE LINE', 9.5, 0.34));
+
+  /* ---- RIGHT sideline: rock border, gravel path, beds, deck, house ---- */
+  g.push(poly([[19,36.8],[58,37.2],[60,41.2],[19,40.6]], 'fill="#a79c8c"'));
+  g.push(poly([[19,37.7],[58,38.1],[59,40.3],[19,39.8]], 'fill="#bcb2a3" opacity=".7"'));
+  for (x = 12; x < 40; x += 2.9)
+    g.push(blob(x, 36.4 + rnd(x) * 0.5, 0.6 + rnd(x + 3) * 0.35,
+      'fill="#9d988f"', x * 9));
+  g.push(poly([[36,41.3],[60,41.8],[62,46],[36,45]], 'fill="#54391f"'));
+  for (x = 37; x < 60; x += 3.0) g.push(bush(x, 42.8 + rnd(x) * 1.2, 1.7, x * 13, '#3c6e2c', '#4d8a37'));
+  g.push(poly([[20,45.5],[57,46.5],[57,62],[20,62]], 'fill="#5c6168"'));   /* house */
+  g.push(poly([[22,45],[55,46],[55,51],[22,50]], 'fill="#7d838b"'));
+  g.push(poly([[32,42.2],[50,42.9],[50,45.9],[32,45.2]], 'fill="#c9c6bf"'));  /* deck */
+  g.push(poly([[32,42.2],[50,42.9],[50,43.5],[32,42.8]], 'fill="#f2f0ec"'));  /* white railing */
+  g.push(label(41, 44.6, 'DECK', 9.5, 0.55));
+  g.push(label(30, 39.4, 'GRAVEL PATH', 9, 0.38));
+
+  /* ---- NEAR end: concrete walk + the garden ---- */
+  g.push(poly([[-5,-3],[-0.4,-3],[-0.4,36],[-5,35]], 'fill="#b5b0a6"'));
+  g.push(poly([[0.5,38],[17,38.6],[18,50],[0.5,49]], 'fill="#2c5423"'));
+  for (i = 0; i < 16; i++)
+    g.push(bush(1.5 + rnd(i) * 15, 39.5 + rnd(i + 9) * 8, 1.5 + rnd(i + 2), i * 23, '#33682a', '#4a8a33'));
+  g.push(line(0.6, 38.2, 17.6, 38.9, 'stroke="#cfcabd" stroke-width="1.6" opacity=".5"'));
+  g.push(label(7, 40.5, 'GARDEN', 9, 0.4));
+
+  /* ---- SWING SET (the end zone) ---- */
+  var bm = 69, sw = 3.8;
+  /* cast shadow */
+  g.push('<g opacity=".35">');
+  g.push(line(bm + 1, 4.6, bm + 1, 24, 'stroke="#2b1c0d" stroke-width="9" stroke-linecap="round"'));
+  g.push('</g>');
+  /* A-frame legs */
+  [4.5, 19].forEach(function(e){
+    g.push(line(bm, e, bm - sw, e - 1.4, 'stroke="#aeb5bd" stroke-width="2.6"'));
+    g.push(line(bm, e, bm + sw, e - 1.4, 'stroke="#aeb5bd" stroke-width="2.6"'));
+  });
+  /* top rail + swings */
+  g.push(line(bm, 4.5, bm, 19, 'stroke="#d7dce2" stroke-width="3.6"'));
+  [8, 11.4, 14.8].forEach(function(sy){
+    g.push(poly([[bm - 1.7, sy - 0.5],[bm + 1.7, sy - 0.5],[bm + 1.7, sy + 0.5],[bm - 1.7, sy + 0.5]],
+      'fill="#252b31"'));
+  });
+  /* tower + blue slide */
+  g.push(poly([[bm - 2.4, 18.4],[bm + 2.4, 18.4],[bm + 2.4, 22.4],[bm - 2.4, 22.4]], 'fill="#9aa2aa"'));
+  g.push(poly([[bm - 2.4, 18.4],[bm + 2.4, 18.4],[bm + 2.4, 22.4],[bm - 2.4, 22.4]],
+    'fill="none" stroke="#6d757d" stroke-width="1.4"'));
+  g.push(poly([[bm + 0.2, 21.8],[bm + 2.3, 21.8],[bm + 4.6, 27.4],[bm + 2.5, 27.7]], 'fill="#5cbde6"'));
+  g.push(poly([[bm + 0.2, 21.8],[bm + 2.3, 21.8],[bm + 4.6, 27.4],[bm + 2.5, 27.7]],
+    'fill="none" stroke="#3d9cc4" stroke-width="1.2"'));
+  g.push(label(80, 13, 'SWING SET', 10.5, 0.62));
+  g.push(label(74, 36, 'END ZONE', 12, 0.5));
+
+  svg.setAttribute('viewBox', '0 0 ' + cw + ' ' + sh);
+  svg.innerHTML = g.join('');
+}
+
+/* ---------------- ink layer ---------------- */
+var items = [], pen = '#ffffff', mode = 'draw', active = null, pid = null;
+
+function load(){ try { items = JSON.parse(localStorage.getItem('bp.play')) || []; } catch(e){ items = []; } }
+function save(){ try { localStorage.setItem('bp.play', JSON.stringify(items)); } catch(e){} }
+
+function redraw(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, sh);
+  ctx.lineJoin = ctx.lineCap = 'round';
+  for (var i = 0; i < items.length; i++){
+    if (items[i].t === 'r') drawRoute(items[i]); else drawBall(items[i].p);
+  }
+  if (active) drawRoute(active);
+  drawQB();
+}
+function drawQB(){
+  var p = proj(4, W / 2);
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.45)';
+  ctx.beginPath(); ctx.arc(p[0], p[1] + 1.5, 9.5, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(p[0], p[1], 8.5, 0, 7); ctx.fill();
+  ctx.fillStyle = '#16210f';
+  ctx.font = '700 10px -apple-system,Segoe UI,Roboto,sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('QB', p[0], p[1] + 0.5);
+  ctx.restore();
+}
+function trace(pts){
+  var a = proj(pts[0][0], pts[0][1]), i, p;
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]);
+  for (i = 1; i < pts.length; i++){ p = proj(pts[i][0], pts[i][1]); ctx.lineTo(p[0], p[1]); }
+}
+function drawRoute(r){
+  if (r.pts.length < 2) return;
+  trace(r.pts);
+  ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 4.5; ctx.stroke();
+  ctx.strokeStyle = r.c;              ctx.lineWidth = 2;   ctx.stroke();
+  var n = r.pts.length, b = proj(r.pts[n - 1][0], r.pts[n - 1][1]), a = b, i = n - 2;
+  for (; i >= 0; i--){
+    a = proj(r.pts[i][0], r.pts[i][1]);
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 12) break;
+  }
+  if (b[0] === a[0] && b[1] === a[1]) return;
+  ctx.save(); ctx.translate(b[0], b[1]); ctx.rotate(Math.atan2(b[1] - a[1], b[0] - a[0]));
+  ctx.beginPath(); ctx.moveTo(1.5, 0); ctx.lineTo(-9, 5.5); ctx.lineTo(-9, -5.5); ctx.closePath();
+  ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = r.c; ctx.fill(); ctx.restore();
+}
+function drawBall(fp){
+  var p = proj(fp[0], fp[1]), d;
+  ctx.save(); ctx.translate(p[0], p[1]);
+  ctx.beginPath(); ctx.arc(0, 0, 13, 0, 7);
+  ctx.moveTo(-18, 0); ctx.lineTo(-8.5, 0); ctx.moveTo(8.5, 0); ctx.lineTo(18, 0);
+  ctx.moveTo(0, -18); ctx.lineTo(0, -8.5); ctx.moveTo(0, 8.5); ctx.lineTo(0, 18);
+  ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 3.6; ctx.stroke();
+  ctx.strokeStyle = '#ffd21f'; ctx.lineWidth = 1.8; ctx.stroke();
+  ctx.rotate(-0.45);
+  ctx.fillStyle = '#7a4a22'; ctx.beginPath(); ctx.ellipse(0, 0, 8, 5, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.moveTo(-3.6, 0); ctx.lineTo(3.6, 0); ctx.stroke();
+  for (d = -2; d <= 2; d += 2){ ctx.beginPath(); ctx.moveTo(d, -1.8); ctx.lineTo(d, 1.8); ctx.stroke(); }
+  ctx.restore();
+}
+
+/* ---------------- input ---------------- */
+function pt(e){
+  var r = cv.getBoundingClientRect();
+  return unproj(e.clientX - r.left, e.clientY - r.top);
+}
+function snap(f){
+  var s = proj(f[0], f[1]), best = null, bd = 34, i, j, p, d, it;
+  for (i = 0; i < items.length; i++){
+    it = items[i]; if (it.t !== 'r') continue;
+    for (j = 0; j < it.pts.length; j++){
+      p = proj(it.pts[j][0], it.pts[j][1]);
+      d = Math.hypot(p[0] - s[0], p[1] - s[1]);
+      if (d < bd){ bd = d; best = it.pts[j]; }
+    }
+  }
+  return best ? [best[0], best[1]] : f;
+}
+cv.addEventListener('pointerdown', function(e){
+  if (pid !== null && active) return;            /* ignore 2nd finger / palm */
+  pid = e.pointerId;
+  try { cv.setPointerCapture(pid); } catch (err) {}
+  var f = pt(e);
+  if (mode === 'ball'){
+    items.push({ t: 'b', p: snap(f) });
+    setMode('draw'); save(); redraw(); pid = null; return;
+  }
+  active = { t: 'r', c: pen, pts: [f] };
+});
+cv.addEventListener('pointermove', function(e){
+  if (e.pointerId !== pid || !active) return;
+  var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null, i, f, last, a, b;
+  if (!evs || !evs.length) evs = [e];
+  for (i = 0; i < evs.length; i++){
+    f = pt(evs[i]); last = active.pts[active.pts.length - 1];
+    a = proj(f[0], f[1]); b = proj(last[0], last[1]);
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) >= 1.6) active.pts.push(f);
+  }
+  redraw();
+});
+function endStroke(e){
+  if (e.pointerId !== pid) return;
+  pid = null;
+  if (!active) return;
+  if (active.pts.length > 1) items.push(active);
+  active = null; save(); redraw();
+}
+cv.addEventListener('pointerup', endStroke);
+cv.addEventListener('pointercancel', endStroke);
+
+var hintT;
+function hint(txt){
+  var h = $('#hint'); h.textContent = txt; h.classList.add('show');
+  clearTimeout(hintT); hintT = setTimeout(function(){ h.classList.remove('show'); }, 1600);
+}
+function setMode(m){ mode = m; $('#ballBtn').classList.toggle('on', m === 'ball'); }
+
+Array.prototype.forEach.call(document.querySelectorAll('.pen'), function(b){
+  b.onclick = function(){
+    pen = b.dataset.c; setMode('draw');
+    Array.prototype.forEach.call(document.querySelectorAll('.pen'), function(x){ x.classList.remove('on'); });
+    b.classList.add('on');
+  };
+});
+$('#ballBtn').onclick = function(){
+  setMode(mode === 'ball' ? 'draw' : 'ball');
+  if (mode === 'ball') hint('TAP WHERE TO THROW IT');
+};
+$('#undo').onclick = function(){ items.pop(); save(); redraw(); };
+$('#clr').onclick  = function(){ items = []; active = null; save(); redraw(); hint('CLEARED'); };
+
+/* ---------------- boot / resize / keep awake ---------------- */
+function relayout(){
+  measure();
+  cv.width = Math.round(cw * dpr); cv.height = Math.round(sh * dpr);
+  cv.style.width = cw + 'px'; cv.style.height = sh + 'px';
+  buildField(); redraw();
+}
+var rt;
+window.addEventListener('resize', function(){ clearTimeout(rt); rt = setTimeout(relayout, 120); });
+window.addEventListener('orientationchange', function(){ setTimeout(relayout, 350); });
+
+var wl = null;
+function keepAwake(){
+  if (!('wakeLock' in navigator)) return;
+  navigator.wakeLock.request('screen').then(function(s){ wl = s; }, function(){});
+}
+document.addEventListener('visibilitychange', function(){
+  if (document.visibilityState === 'visible') keepAwake();
+});
+
+load(); relayout(); keepAwake();
+</script>

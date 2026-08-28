@@ -1,0 +1,15 @@
+{
+  "name": "Backyard Playmaker",
+  "short_name": "Playmaker",
+  "description": "Draw the route on a map of the backyard, then sticker where to throw it.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#12180f",
+  "theme_color": "#12180f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
