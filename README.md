@@ -60,6 +60,12 @@ Everything the app stores — routes, markers, the QB, the map icons — is in
 pixels, so it all stays glued to the yard through rotation and resize, and it
 survives dropping in a newer photo of the same crop.
 
+On a tall screen the photo is scaled to slightly overflow the width — up to 5% of
+each side runs off the edge — rather than being letterboxed. Those outer strips are
+only tree canopy and driveway, and fitting the whole width instead would cost about
+10% of the field's on-screen length. On a wide screen the height binds first and
+nothing is clipped.
+
 To re-crop from a fresh satellite image, rotate it the same way and match the
 existing framing, then re-measure the landmark constants in `F` near the top of the
 script (`goal`, `near`, `left`, `right`) — they are fractions of the image and are
