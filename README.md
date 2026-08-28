@@ -24,8 +24,9 @@ whoever is playing quarterback.
 **Editing the map** (✎, top right)
 
 Place reference markers along the sidelines so the QB has something to aim off:
-bush, small tree, medium tree, large tree. Tap an empty spot to drop the selected
-icon, tap an existing one to select it, drag to move, 🗑 to delete, DONE to go back.
+tree, big tree, and an orange cone for anything you set out yourself. Tap an empty
+spot to drop the selected icon, tap an existing one to select it, drag to move, 🗑 to
+delete, DONE to go back.
 
 The garden changes from year to year, so the map is yours to keep current. The
 layout is saved on the phone *and* mirrored into the page URL — copy the address

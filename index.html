@@ -74,16 +74,17 @@
   </div>
 
   <div class="bar" id="editbar" hidden>
-    <button class="ic on" data-k="bush">
-      <svg width="22" height="14" viewBox="0 0 22 14"><g fill="#4f9a3c" stroke="#cfe8c2" stroke-width="1.2">
-      <ellipse cx="6" cy="9" rx="5" ry="4"/><ellipse cx="16" cy="9" rx="5" ry="4"/><ellipse cx="11" cy="6" rx="5.5" ry="4.5"/>
-      </g></svg><b>BUSH</b></button>
-    <button class="ic" data-k="t1">
-      <svg width="22" height="14" viewBox="0 0 22 14"><circle cx="11" cy="7" r="4.5" fill="#4a9a40" stroke="#cfe8c2" stroke-width="1.2"/></svg><b>SM</b></button>
-    <button class="ic" data-k="t2">
-      <svg width="22" height="16" viewBox="0 0 22 16"><circle cx="11" cy="8" r="6.4" fill="#37853040" stroke="#cfe8c2" stroke-width="1.2" style="fill:#378530"/></svg><b>MED</b></button>
+    <button class="ic on" data-k="t1">
+      <svg width="24" height="18" viewBox="0 0 24 18"><circle cx="12" cy="9" r="5" fill="#4a9a40" stroke="#e8f6de" stroke-width="1.4"/></svg><b>TREE</b></button>
     <button class="ic" data-k="t3">
-      <svg width="24" height="18" viewBox="0 0 24 18"><circle cx="12" cy="9" r="8.2" fill="#2a6b25" stroke="#cfe8c2" stroke-width="1.2"/></svg><b>LG</b></button>
+      <svg width="24" height="18" viewBox="0 0 24 18"><circle cx="12" cy="9" r="8" fill="#2a6b25" stroke="#e8f6de" stroke-width="1.4"/></svg><b>BIG TREE</b></button>
+    <button class="ic" data-k="cone">
+      <svg width="24" height="18" viewBox="0 0 24 18">
+        <rect x="4.5" y="1.5" width="15" height="15" rx="4" fill="#e2600d" stroke="#f4efe6" stroke-width="1.3"/>
+        <circle cx="12" cy="9" r="5" fill="#ff7a18"/>
+        <circle cx="12" cy="9" r="3.4" fill="none" stroke="#fff" stroke-width="1.7"/>
+        <circle cx="12" cy="9" r="1.7" fill="#ffa64d"/>
+      </svg><b>CONE</b></button>
     <button id="del">&#128465;</button>
     <button id="done">DONE</button>
   </div>
@@ -132,10 +133,13 @@ function clamp01(p){ return [Math.max(0, Math.min(1, p[0])), Math.max(0, Math.mi
 /* ---------------- state ---------------- */
 var play = { qb: [0.457, 0.885], items: [] };  /* qb starts mid-lawn; items = routes + markers */
 var icons = [];                                /* {k,u,v} placed reference icons */
-var pen = '#ffffff', mode = 'draw', kind = 'bush';
+var pen = '#ffffff', mode = 'draw', kind = 't1';
 var active = null, pid = null, drag = null, sel = -1, lpTimer = null, lpFrom = null;
 
-var ICON = { bush: 0.026, t1: 0.036, t2: 0.050, t3: 0.068 };  /* radius, x image width */
+var ICON = { t1: 0.036, t3: 0.068, cone: 0.026 };   /* radius, as a fraction of image width */
+/* the palette used to carry a bush and a medium tree; fold anything already
+   placed (or arriving in a shared map link) onto the sizes that remain */
+var ALIAS = { bush: 't1', t2: 't3' };
 
 function savePlay(){ try { localStorage.setItem('bp.play2', JSON.stringify(play)); } catch(e){} }
 function loadPlay(){
@@ -152,9 +156,9 @@ function encodeMap(){
 function decodeMap(s){
   var out = [];
   (s || '').split(';').forEach(function(chunk){
-    var a = chunk.split(',');
-    if (a.length === 3 && ICON[a[0]] && isFinite(a[1]) && isFinite(a[2]))
-      out.push({ k: a[0], u: +a[1], v: +a[2] });
+    var a = chunk.split(','), k = ALIAS[a[0]] || a[0];
+    if (a.length === 3 && ICON[k] && isFinite(a[1]) && isFinite(a[2]))
+      out.push({ k: k, u: +a[1], v: +a[2] });
   });
   return out;
 }
@@ -237,32 +241,56 @@ function clump(x, y, r, n, squash){
     ctx.arc(px, py, rr, 0, TAU);
   }
 }
+function rrect(x, y, w, h, rad){
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y,     x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x,     y + h, rad);
+  ctx.arcTo(x,     y + h, x,     y,     rad);
+  ctx.arcTo(x,     y,     x + w, y,     rad);
+  ctx.closePath();
+}
+/* a traffic cone from directly overhead: square base, orange rings, white band */
+function coneShape(r){
+  ctx.fillStyle = 'rgba(0,0,0,.45)';
+  rrect(-r * 0.93 + 1.5, -r * 0.93 + 2.5, r * 1.86, r * 1.86, r * 0.34); ctx.fill();
+  ctx.fillStyle = 'rgba(244,239,230,.92)';
+  rrect(-r * 0.93, -r * 0.93, r * 1.86, r * 1.86, r * 0.34); ctx.fill();
+  ctx.fillStyle = '#dd5c0c';
+  rrect(-r * 0.78, -r * 0.78, r * 1.56, r * 1.56, r * 0.28); ctx.fill();
+  ctx.fillStyle = '#ff7a18';
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = Math.max(1.3, r * 0.17);
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.43, 0, TAU); ctx.stroke();
+  ctx.fillStyle = '#ffab55';
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.21, 0, TAU); ctx.fill();
+}
 function drawIcon(o, isSel){
-  var p = S(o.u, o.v), r = ICON[o.k] * dw, bushy = o.k === 'bush';
-  var body = bushy ? '#4f9a3c' : (o.k === 't1' ? '#4a9a40' : o.k === 't2' ? '#378530' : '#2a6b25');
-  var lobes = bushy ? 3 : (o.k === 't1' ? 5 : o.k === 't2' ? 6 : 7);
-  var squash = bushy ? 0.55 : 1;
+  var p = S(o.u, o.v), big = o.k === 't3', r = (ICON[o.k] || ICON.t1) * dw;
   ctx.save();
   ctx.translate(p[0], p[1]);
-  /* stack three filled clumps -- shadow, pale rim, body -- so only the outer
-     silhouette shows.  Stroking would draw every internal circle and the icon
-     would read as a flower instead of a canopy. */
-  ctx.fillStyle = 'rgba(0,0,0,.42)';
-  clump(1.5, 3, r * 1.16, lobes, squash); ctx.fill();
-  ctx.fillStyle = 'rgba(232,246,222,.9)';
-  clump(0, 0, r * 1.1, lobes, squash); ctx.fill();
-  ctx.fillStyle = body;
-  clump(0, 0, r, lobes, squash); ctx.fill();
-  ctx.save();                                    /* sunlit crown, clipped to shape */
-  clump(0, 0, r, lobes, squash); ctx.clip();
-  ctx.fillStyle = 'rgba(255,255,255,' + (bushy ? 0.13 : 0.18) + ')';
-  ctx.beginPath();
-  ctx.arc(-r * 0.26, -r * 0.3 * squash, r * (bushy ? 0.5 : 0.62), 0, TAU);
-  ctx.fill();
-  ctx.restore();
+  if (o.k === 'cone'){
+    coneShape(r);
+  } else {
+    var body = big ? '#2a6b25' : '#4a9a40', lobes = big ? 7 : 5;
+    /* stack three filled clumps -- shadow, pale rim, body -- so only the outer
+       silhouette shows.  Stroking would draw every internal circle and the icon
+       would read as a flower instead of a canopy. */
+    ctx.fillStyle = 'rgba(0,0,0,.42)';
+    clump(1.5, 3, r * 1.16, lobes, 1); ctx.fill();
+    ctx.fillStyle = 'rgba(232,246,222,.9)';
+    clump(0, 0, r * 1.1, lobes, 1); ctx.fill();
+    ctx.fillStyle = body;
+    clump(0, 0, r, lobes, 1); ctx.fill();
+    ctx.save();                                  /* sunlit crown, clipped to shape */
+    clump(0, 0, r, lobes, 1); ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.beginPath(); ctx.arc(-r * 0.26, -r * 0.3, r * 0.62, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
   if (isSel){
     ctx.strokeStyle = '#ffd21f'; ctx.lineWidth = 2.2; ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.arc(0, 0, r * 1.35, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.4, 0, TAU); ctx.stroke();
   }
   ctx.restore();
 }
@@ -352,7 +380,7 @@ function onQB(sx, sy){
 }
 function iconAt(sx, sy){
   for (var i = icons.length - 1; i >= 0; i--){
-    var p = S(icons[i].u, icons[i].v), r = Math.max(16, ICON[icons[i].k] * dw);
+    var p = S(icons[i].u, icons[i].v), r = Math.max(16, (ICON[icons[i].k] || ICON.t1) * dw);
     if (Math.hypot(p[0] - sx, p[1] - sy) <= r) return i;
   }
   return -1;
