@@ -101,10 +101,11 @@
    toward the swing set: left = tree line, right = gravel path / house,
    bottom = the walk behind the quarterback.
 -------------------------------------------------------------------*/
-var IMG = { w: 720, h: 1450 };
+var IMG = { w: 755, h: 1445 };
 
-/* landmarks measured off field.jpg, as fractions of its height/width */
-var F = { back: 0.125, goal: 0.2572, near: 0.9345, left: 0.139, right: 0.889 };
+/* landmarks measured off field.jpg, as fractions of its height/width.
+   There is no back line: every bit of grass past the goal line is a score. */
+var F = { goal: 0.2547, near: 0.9343, left: 0.0993, right: 0.8146 };
 
 var TAU = Math.PI * 2;
 var $ = function(s){ return document.querySelector(s); };
@@ -185,8 +186,8 @@ function redraw(){
   drawQB();
 }
 
-function hline(v, w, alpha, dash){
-  var a = S(F.left - 0.02, v), b = S(F.right + 0.02, v);
+function hline(v, w, alpha, dash, padR){
+  var a = S(F.left - 0.02, v), b = S(F.right + (padR || 0.02), v);
   ctx.save();
   ctx.setLineDash(dash || []);
   ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = w + 2;
@@ -215,9 +216,10 @@ function fieldMarks(){
   tag(F.right - 0.09, F.goal + span * 0.75, '5 yd', 0.4);
   tag(F.right - 0.10, F.goal + span * 0.50, '10 yd', 0.4);
   tag(F.right - 0.10, F.goal + span * 0.25, '15 yd', 0.4);
-  hline(F.goal, 2.6, 0.85);
-  tag(F.right - 0.10, F.goal - 0.016, 'GOAL', 0.85, 11);
-  hline(F.back, 1.6, 0.4);
+  /* the yard flares out to the right up by the swing set, so the goal line has
+     to run further than the yard markers do */
+  hline(F.goal, 2.6, 0.85, null, 0.105);
+  tag(F.right - 0.12, F.goal - 0.017, 'GOAL', 0.85, 11);
   /* line of scrimmage follows the quarterback */
   hline(play.qb[1], 1.4, 0.34, [3, 6]);
 }
@@ -520,7 +522,26 @@ document.addEventListener('visibilitychange', function(){
   if (document.visibilityState === 'visible') keepAwake();
 });
 
-loadPlay(); loadMap();
+/* field.jpg was re-cropped wider on the right; anything saved against the old
+   crop has to be shifted or it would sit a couple of yards off the yard. */
+function migrateCrop(){
+  var CROP = '2';
+  try {
+    if (localStorage.getItem('bp.crop') === CROP) return;
+    var mu = function(u){ return (u * 720 - 25) / 755; },
+        mv = function(v){ return (v * 1450 - 5) / 1445; };
+    play.qb = [mu(play.qb[0]), mv(play.qb[1])];
+    play.items.forEach(function(it){
+      if (it.t === 'r') it.pts = it.pts.map(function(p){ return [mu(p[0]), mv(p[1])]; });
+      else it.p = [mu(it.p[0]), mv(it.p[1])];
+    });
+    icons.forEach(function(o){ o.u = mu(o.u); o.v = mv(o.v); });
+    localStorage.setItem('bp.crop', CROP);
+    savePlay(); saveMap();
+  } catch(e){}
+}
+
+loadPlay(); loadMap(); migrateCrop();
 if (bg.complete && bg.naturalWidth){ IMG.w = bg.naturalWidth; IMG.h = bg.naturalHeight; }
 bg.addEventListener('load', function(){
   IMG.w = bg.naturalWidth; IMG.h = bg.naturalHeight; relayout();

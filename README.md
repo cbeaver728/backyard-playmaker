@@ -48,9 +48,11 @@ yard, so:
 - **Left** is north: the tree line and the hedge.
 - **Right** is south: the gravel path, the beds, the deck and house.
 - **Behind the QB** is the concrete walk and the garden.
-- The **end zone** is the bark bed under the swing set plus the grass beside it. The
-  goal line is drawn on the bed's near edge, about 20 yards out, with faint 5 / 10 /
-  15 yard references between there and the near end.
+- The **end zone** is everything past the goal line: the bark bed under the swing
+  set and all the grass around it, including the strip that flares out to the right.
+  Every bit of it is a score, so there is no back line — only the goal line, drawn
+  on the near edge of the bed about 20 yards out, with faint 5 / 10 / 15 yard
+  references between there and the near end.
 
 Everything the app stores — routes, markers, the QB, the map icons — is in
 **normalised image coordinates** (0..1 across `field.jpg`). Nothing is in screen
@@ -58,9 +60,11 @@ pixels, so it all stays glued to the yard through rotation and resize, and it
 survives dropping in a newer photo of the same crop.
 
 To re-crop from a fresh satellite image, rotate it the same way and match the
-existing framing, then check the four landmark constants in `F` near the top of the
-script (`back`, `goal`, `near`, `left`, `right`) — they are fractions of the image
-and are what the goal line and yard markers are drawn from.
+existing framing, then re-measure the landmark constants in `F` near the top of the
+script (`goal`, `near`, `left`, `right`) — they are fractions of the image and are
+what the goal line and yard markers are drawn from. Bump the `CROP` stamp in
+`migrateCrop()` so plays and maps saved against the old framing get shifted onto
+the new one instead of silently sitting a couple of yards off.
 
 ## Deploying
 
